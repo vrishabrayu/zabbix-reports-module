@@ -1,0 +1,31 @@
+{
+	"manifest_version": 2.0,
+	"id": "zabbix_custom_reports",
+	"name": "Custom Reports",
+	"version": "1.0",
+	"author": "Custom",
+	"description": "Custom reports module with device details, SLA, CPU, memory, uptime and PDF/CSV export",
+	"namespace": "CustomReports",
+	"actions": {
+		"customreports.view": {
+			"class": "CControllerCustomReportsView",
+			"view": "customreports.view",
+			"layout": "layout.htmlpage"
+		},
+		"customreports.export": {
+			"class": "CControllerCustomReportsExport"
+		}
+	},
+	"menu": {
+		"top_menu_item": {
+			"label": "Reports+",
+			"top_menu_item_icon": "icon-favorite",
+			"sub_menu_items": {
+				"custom_reports_view": {
+					"label": "Device & SLA Report",
+					"action": "customreports.view"
+				}
+			}
+		}
+	}
+}
