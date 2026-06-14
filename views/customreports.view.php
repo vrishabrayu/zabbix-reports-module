@@ -22,7 +22,7 @@ $export_url = (new CUrl('zabbix.php'))->setArgument('action', 'customreports.exp
 // Build group options
 $group_options = [(new CSelectOption(0, '-- All Groups --'))];
 foreach ($groups as $g) {
-	$group_options[] = (new CSelectOption($g['groupid'], $g['name']))->setSelected($groupid == $g['groupid']);
+	$group_options[] = new CSelectOption($g['groupid'], $g['name']);
 }
 
 // Build table rows
