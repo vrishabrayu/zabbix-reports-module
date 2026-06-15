@@ -19,6 +19,23 @@ class CControllerCustomReportsView extends CController {
 		return $this->getUserType() >= USER_TYPE_ZABBIX_USER;
 	}
 
+	private function getItemValue(int $hostid, array $keys): string {
+		foreach ($keys as $key) {
+			$items = API::Item()->get([
+				'output'      => ['lastvalue', 'key_'],
+				'hostids'     => [$hostid],
+				'search'      => ['key_' => $key],
+				'startSearch' => true,
+				'filter'      => ['status' => 0],
+				'limit'       => 1
+			]);
+			if (!empty($items) && $items[0]['lastvalue'] !== '') {
+				return $items[0]['lastvalue'];
+			}
+		}
+		return '';
+	}
+
 	protected function doAction(): void {
 		$from    = $this->getInput('from', date('Y-m-d', strtotime('-30 days')));
 		$to      = $this->getInput('to', date('Y-m-d'));
@@ -30,12 +47,12 @@ class CControllerCustomReportsView extends CController {
 		]);
 
 		$host_filter = [
-			'output'             => ['hostid', 'host', 'name', 'status'],
-			'selectInterfaces'   => ['ip', 'type'],
-			'selectHostGroups'   => ['groupid', 'name'],
-			'selectInventory'    => ['os', 'type', 'os_full', 'hardware', 'hardware_full'],
-			'monitored_hosts'    => true,
-			'sortfield'          => 'name'
+			'output'           => ['hostid', 'host', 'name', 'status'],
+			'selectInterfaces' => ['ip', 'type'],
+			'selectHostGroups' => ['groupid', 'name'],
+			'selectInventory'  => ['os', 'os_full', 'type', 'hardware', 'hardware_full'],
+			'monitored_hosts'  => true,
+			'sortfield'        => 'name'
 		];
 		if ($groupid) {
 			$host_filter['groupids'] = [$groupid];
@@ -50,19 +67,19 @@ class CControllerCustomReportsView extends CController {
 		foreach ($hosts as $host) {
 			$hostid = $host['hostid'];
 
-			// IP — get first non-loopback interface
+			// IP
 			$ip = 'N/A';
 			if (!empty($host['interfaces'])) {
 				foreach ($host['interfaces'] as $iface) {
-					if ($iface['ip'] !== '127.0.0.1') {
+					if (!empty($iface['ip']) && $iface['ip'] !== '127.0.0.1') {
 						$ip = $iface['ip'];
 						break;
 					}
 				}
-				if ($ip === 'N/A') $ip = $host['interfaces'][0]['ip'];
+				if ($ip === 'N/A') $ip = $host['interfaces'][0]['ip'] ?? 'N/A';
 			}
 
-			// Group — try both selectHostGroups and selectGroups keys
+			// Group
 			$group_name = 'N/A';
 			if (!empty($host['hostgroups'])) {
 				$group_name = $host['hostgroups'][0]['name'];
@@ -70,108 +87,84 @@ class CControllerCustomReportsView extends CController {
 				$group_name = $host['groups'][0]['name'];
 			}
 
-			// OS — from inventory or fallback to system.uname item
+			// OS — inventory first, then system.uname item
 			$os = 'N/A';
-			if (!empty($host['inventory'])) {
-				$inv = $host['inventory'];
-				if (!empty($inv['os'])) $os = $inv['os'];
-				elseif (!empty($inv['os_full'])) $os = $inv['os_full'];
-			}
-			if ($os === 'N/A') {
-				$uname = API::Item()->get(['output' => ['lastvalue'], 'hostids' => [$hostid], 'search' => ['key_' => 'system.uname'], 'limit' => 1]);
-				if (!empty($uname)) {
-					$parts = explode(' ', $uname[0]['lastvalue']);
-					$os = isset($parts[0]) ? $parts[0] : $uname[0]['lastvalue'];
+			$inv = $host['inventory'] ?? [];
+			if (!empty($inv['os'])) $os = $inv['os'];
+			elseif (!empty($inv['os_full'])) $os = $inv['os_full'];
+			else {
+				$val = $this->getItemValue($hostid, ['system.uname', 'system.sw.os']);
+				if ($val !== '') {
+					$parts = explode(' ', $val);
+					$os = $parts[0] . (isset($parts[2]) ? ' ' . $parts[2] : '');
 				}
 			}
 
-			// Type — from inventory
+			// Type — inventory first, then system description
 			$type = 'N/A';
-			if (!empty($host['inventory'])) {
-				$inv = $host['inventory'];
-				if (!empty($inv['type'])) $type = $inv['type'];
-				elseif (!empty($inv['hardware'])) $type = $inv['hardware'];
+			if (!empty($inv['type'])) $type = $inv['type'];
+			elseif (!empty($inv['hardware'])) $type = $inv['hardware'];
+			else {
+				$val = $this->getItemValue($hostid, ['system.hw.chassis', 'system.description']);
+				if ($val !== '') $type = substr($val, 0, 30);
 			}
 
-			// CPU — try multiple keys
+			// CPU
 			$cpu_util = 'N/A';
-			$cpu_keys = ['system.cpu.util', 'system.cpu.util[,idle]', 'system.cpu.load'];
-			foreach ($cpu_keys as $key) {
-				$items = API::Item()->get(['output' => ['lastvalue', 'key_'], 'hostids' => [$hostid], 'search' => ['key_' => $key], 'startSearch' => true, 'limit' => 1]);
-				if (!empty($items) && $items[0]['lastvalue'] !== '') {
-					$cpu_util = round((float)$items[0]['lastvalue'], 1) . '%';
-					break;
-				}
-			}
-
-			// Memory — try multiple keys
-			$mem_util = 'N/A';
-			$mem_keys = ['vm.memory.utilization', 'vm.memory.size[pavailable]', 'vm.memory.size[available]'];
-			foreach ($mem_keys as $key) {
-				$items = API::Item()->get(['output' => ['lastvalue', 'key_'], 'hostids' => [$hostid], 'search' => ['key_' => $key], 'startSearch' => true, 'limit' => 1]);
-				if (!empty($items) && $items[0]['lastvalue'] !== '') {
-					$val = round((float)$items[0]['lastvalue'], 1);
-					// if key is 'available', convert to used %
-					if (strpos($key, 'available') !== false && $val <= 100) {
-						$val = round(100 - $val, 1);
-					}
-					$mem_util = $val . '%';
-					break;
-				}
-			}
-
-			// Uptime — try multiple keys
-			$uptime = 'N/A';
-			$up_keys = ['system.uptime', 'system.uptime[0]'];
-			foreach ($up_keys as $key) {
-				$items = API::Item()->get(['output' => ['lastvalue'], 'hostids' => [$hostid], 'search' => ['key_' => $key], 'startSearch' => true, 'limit' => 1]);
-				if (!empty($items) && $items[0]['lastvalue'] !== '' && (int)$items[0]['lastvalue'] > 0) {
-					$s      = (int)$items[0]['lastvalue'];
-					$uptime = floor($s / 86400) . 'd ' . floor(($s % 86400) / 3600) . 'h';
-					break;
-				}
-			}
-
-			// SLA — calculate from events (not problems) to avoid overlap issues
-			$events = API::Event()->get([
-				'output'       => ['clock', 'value'],
-				'objectids'    => array_column(
-					API::Trigger()->get(['output' => ['triggerid'], 'hostids' => [$hostid], 'only_true' => false]),
-					'triggerid'
-				),
-				'source'       => EVENT_SOURCE_TRIGGERS,
-				'object'       => EVENT_OBJECT_TRIGGER,
-				'time_from'    => $time_from,
-				'time_till'    => $time_to,
-				'sortfield'    => 'clock',
-				'sortorder'    => 'ASC',
-				'limit'        => 1000
+			$val = $this->getItemValue($hostid, [
+				'system.cpu.util',
+				'system.cpu.util[all,idle]',
+				'system.cpu.util[,idle]',
+				'system.cpu.load[percpu,avg1]'
 			]);
+			if ($val !== '') $cpu_util = round((float)$val, 1) . '%';
 
-			// Simpler SLA: use problem count * avg duration estimation
-			// More reliable: use availability API
+			// Memory
+			$mem_util = 'N/A';
+			$val = $this->getItemValue($hostid, ['vm.memory.utilization']);
+			if ($val !== '') {
+				$mem_util = round((float)$val, 1) . '%';
+			} else {
+				// Try available memory and calculate used %
+				$val = $this->getItemValue($hostid, [
+					'vm.memory.size[pavailable]',
+					'vm.memory.size[pused]'
+				]);
+				if ($val !== '') {
+					$fval = round((float)$val, 1);
+					// if pavailable, invert to get used
+					$mem_util = (strpos($this->getItemValue($hostid, ['vm.memory.size[pavailable]']), '') !== false && $fval <= 100)
+						? round(100 - $fval, 1) . '%'
+						: $fval . '%';
+				}
+			}
+
+			// Uptime
+			$uptime = 'N/A';
+			$val = $this->getItemValue($hostid, ['system.uptime']);
+			if ($val !== '' && (int)$val > 0) {
+				$s      = (int)$val;
+				$uptime = floor($s / 86400) . 'd ' . floor(($s % 86400) / 3600) . 'h';
+			}
+
+			// SLA — fetch problems and merge overlapping intervals
 			$problems = API::Problem()->get([
 				'output'    => ['clock', 'r_clock'],
 				'hostids'   => [$hostid],
 				'time_from' => $time_from,
 				'time_till' => $time_to,
 				'recent'    => false,
-				'limit'     => 500
+				'limit'     => 1000
 			]);
 
 			$downtime_seconds = 0;
 			$intervals = [];
-
-			// Merge overlapping intervals to avoid negative SLA
 			foreach ($problems as $p) {
 				$ps = max((int)$p['clock'], $time_from);
 				$pe = ((int)$p['r_clock'] > 0) ? min((int)$p['r_clock'], $time_to) : $time_to;
-				if ($pe > $ps) {
-					$intervals[] = [$ps, $pe];
-				}
+				if ($pe > $ps) $intervals[] = [$ps, $pe];
 			}
 
-			// Sort and merge overlapping intervals
 			if (!empty($intervals)) {
 				usort($intervals, fn($a, $b) => $a[0] - $b[0]);
 				$merged = [$intervals[0]];
@@ -188,10 +181,8 @@ class CControllerCustomReportsView extends CController {
 				}
 			}
 
-			// Cap downtime at total period
 			$downtime_seconds = min($downtime_seconds, $total_seconds);
-			$sla = round((($total_seconds - $downtime_seconds) / $total_seconds) * 100, 3);
-			$sla = max(0, min(100, $sla)); // clamp between 0-100
+			$sla    = max(0, min(100, round((($total_seconds - $downtime_seconds) / $total_seconds) * 100, 3)));
 			$status = ($host['status'] == HOST_STATUS_MONITORED) ? 'Up' : 'Down';
 
 			$host_data[] = [
