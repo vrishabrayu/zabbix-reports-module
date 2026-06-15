@@ -1,5 +1,5 @@
 <?php
-// v2.0 - fixed SLA calculation, removed Event API sort
+// v2.1 - removed Type/MemUtil columns, added SNMP uptime support
 
 class CControllerCustomReportsView extends CController {
 
@@ -51,7 +51,7 @@ class CControllerCustomReportsView extends CController {
 			'output'           => ['hostid', 'host', 'name', 'status'],
 			'selectInterfaces' => ['ip', 'type'],
 			'selectHostGroups' => ['groupid', 'name'],
-			'selectInventory'  => ['os', 'os_full', 'type', 'hardware', 'hardware_full'],
+			'selectInventory'  => ['os', 'os_full'],
 			'monitored_hosts'  => true,
 			'sortfield'        => 'name'
 		];
@@ -88,26 +88,17 @@ class CControllerCustomReportsView extends CController {
 				$group_name = $host['groups'][0]['name'];
 			}
 
-			// OS — inventory first, then system.uname item
-			$os = 'N/A';
+			// OS
+			$os  = 'N/A';
 			$inv = $host['inventory'] ?? [];
 			if (!empty($inv['os'])) $os = $inv['os'];
 			elseif (!empty($inv['os_full'])) $os = $inv['os_full'];
 			else {
-				$val = $this->getItemValue($hostid, ['system.uname', 'system.sw.os']);
+				$val = $this->getItemValue($hostid, ['system.uname', 'system.sw.os', 'system.descr']);
 				if ($val !== '') {
 					$parts = explode(' ', $val);
-					$os = $parts[0] . (isset($parts[2]) ? ' ' . $parts[2] : '');
+					$os    = $parts[0] . (isset($parts[2]) ? ' ' . $parts[2] : '');
 				}
-			}
-
-			// Type — inventory first, then system description
-			$type = 'N/A';
-			if (!empty($inv['type'])) $type = $inv['type'];
-			elseif (!empty($inv['hardware'])) $type = $inv['hardware'];
-			else {
-				$val = $this->getItemValue($hostid, ['system.hw.chassis', 'system.description']);
-				if ($val !== '') $type = substr($val, 0, 30);
 			}
 
 			// CPU
@@ -120,35 +111,24 @@ class CControllerCustomReportsView extends CController {
 			]);
 			if ($val !== '') $cpu_util = round((float)$val, 1) . '%';
 
-			// Memory
-			$mem_util = 'N/A';
-			$val = $this->getItemValue($hostid, ['vm.memory.utilization']);
-			if ($val !== '') {
-				$mem_util = round((float)$val, 1) . '%';
-			} else {
-				// Try available memory and calculate used %
-				$val = $this->getItemValue($hostid, [
-					'vm.memory.size[pavailable]',
-					'vm.memory.size[pused]'
-				]);
-				if ($val !== '') {
-					$fval = round((float)$val, 1);
-					// if pavailable, invert to get used
-					$mem_util = (strpos($this->getItemValue($hostid, ['vm.memory.size[pavailable]']), '') !== false && $fval <= 100)
-						? round(100 - $fval, 1) . '%'
-						: $fval . '%';
-				}
-			}
-
-			// Uptime
+			// Uptime — agent and SNMP keys
 			$uptime = 'N/A';
-			$val = $this->getItemValue($hostid, ['system.uptime']);
+			$val = $this->getItemValue($hostid, [
+				'system.uptime',          // Zabbix agent (Linux/Windows)
+				'sysUpTime',              // SNMP generic
+				'sysUpTime.0',            // SNMP OID
+				'DISMAN-EVENT-MIB::sysUpTimeInstance' // full OID
+			]);
 			if ($val !== '' && (int)$val > 0) {
-				$s      = (int)$val;
+				$s = (int)$val;
+				// SNMP uptime is in centiseconds (100ths of a second)
+				// Zabbix agent uptime is in seconds
+				// Detect: if value > 1e9 it's likely centiseconds
+				if ($s > 1000000000) $s = (int)($s / 100);
 				$uptime = floor($s / 86400) . 'd ' . floor(($s % 86400) / 3600) . 'h';
 			}
 
-			// SLA — fetch problems and merge overlapping intervals
+			// SLA
 			$problems = API::Problem()->get([
 				'output'    => ['clock', 'r_clock'],
 				'hostids'   => [$hostid],
@@ -158,7 +138,6 @@ class CControllerCustomReportsView extends CController {
 				'limit'     => 1000
 			]);
 
-			$downtime_seconds = 0;
 			$intervals = [];
 			foreach ($problems as $p) {
 				$ps = max((int)$p['clock'], $time_from);
@@ -166,6 +145,7 @@ class CControllerCustomReportsView extends CController {
 				if ($pe > $ps) $intervals[] = [$ps, $pe];
 			}
 
+			$downtime_seconds = 0;
 			if (!empty($intervals)) {
 				usort($intervals, fn($a, $b) => $a[0] - $b[0]);
 				$merged = [$intervals[0]];
@@ -192,10 +172,8 @@ class CControllerCustomReportsView extends CController {
 				'ip'       => $ip,
 				'group'    => $group_name,
 				'os'       => $os,
-				'type'     => $type,
 				'status'   => $status,
 				'cpu_util' => $cpu_util,
-				'mem_util' => $mem_util,
 				'uptime'   => $uptime,
 				'sla'      => $sla . '%',
 				'sla_raw'  => $sla,

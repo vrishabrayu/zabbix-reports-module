@@ -86,7 +86,7 @@ $export_bar = (new CDiv([
 
 // Table
 $table = (new CTableInfo())
-	->setHeader(['#', 'Host Name', 'IP Address', 'Group', 'OS', 'Type', 'Status', 'CPU Util', 'Mem Util', 'Uptime', 'SLA %', 'Problems', 'Downtime']);
+	->setHeader(['#', 'Host Name', 'IP Address', 'Group', 'OS', 'Status', 'CPU Util', 'Uptime', 'SLA %', 'Problems', 'Downtime']);
 
 $i = 1;
 foreach ($host_data as $h) {
@@ -100,10 +100,8 @@ foreach ($host_data as $h) {
 		$h['ip'],
 		$h['group'],
 		$h['os'],
-		$h['type'],
 		(new CSpan($h['status']))->setAttribute('style', 'color:' . $st_color . ';font-weight:bold'),
 		$h['cpu_util'],
-		$h['mem_util'],
 		$h['uptime'],
 		(new CSpan($h['sla']))->setAttribute('style', 'color:' . $sla_color . ';font-weight:bold'),
 		$h['problems'],
