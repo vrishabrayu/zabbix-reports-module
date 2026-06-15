@@ -1,5 +1,5 @@
 <?php
-// v3.0 - removed Type/MemUtil columns, added SNMP uptime support
+// v4.0 - 20260615 - removed Type/MemUtil, SNMP uptime, fixed SLA
 
 class CControllerCustomReportsView extends CController {
 
