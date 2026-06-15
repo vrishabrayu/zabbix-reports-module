@@ -1,4 +1,5 @@
 <?php
+// v2.0 - fixed SLA calculation, removed Event API sort
 
 class CControllerCustomReportsView extends CController {
 
